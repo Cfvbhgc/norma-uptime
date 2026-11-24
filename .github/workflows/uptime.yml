@@ -1,0 +1,53 @@
+# Монитор доступности: /api/health каждые 10 минут, извещения в Telegram (uptime/check.mjs).
+# Ручной запуск с адресом — тест: у него своё состояние, боевое не трогается.
+name: Доступность
+
+on:
+    schedule:
+        - cron: '*/10 * * * *'
+    workflow_dispatch:
+        inputs:
+            url:
+                description: 'Адрес для теста (пусто — прод)'
+                required: false
+                default: ''
+
+permissions:
+    contents: read
+
+concurrency:
+    group: uptime-${{ inputs.url && 'test' || 'prod' }}
+    cancel-in-progress: false
+
+jobs:
+    health:
+        runs-on: ubuntu-latest
+        timeout-minutes: 3
+        env:
+            CHECK_URL: ${{ inputs.url || 'https://89-169-53-119.sslip.io/api/health' }}
+            STATE_SCOPE: ${{ inputs.url && 'test' || 'prod' }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  sparse-checkout: uptime
+
+            - name: Состояние прошлых проверок
+              uses: actions/cache/restore@v6
+              with:
+                  path: .uptime-state
+                  key: uptime-${{ env.STATE_SCOPE }}-${{ github.run_id }}
+                  restore-keys: uptime-${{ env.STATE_SCOPE }}-
+
+            - name: Проверка и извещение
+              run: node uptime/check.mjs
+              env:
+                  STATE_FILE: .uptime-state/state.json
+                  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+                  TELEGRAM_CHAT_ID: ${{ secrets.ILYA_TG_ID }}
+
+            - name: Сохранить состояние
+              if: always()
+              uses: actions/cache/save@v6
+              with:
+                  path: .uptime-state
+                  key: uptime-${{ env.STATE_SCOPE }}-${{ github.run_id }}
